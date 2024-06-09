@@ -1,4 +1,3 @@
-
 use actix::{Addr, Message};
 use serde::{Deserialize, Serialize};
 
@@ -43,10 +42,17 @@ pub struct SendTextMessage {
 }
 
 #[derive(Deserialize, Serialize, Debug)]
-pub struct ClientMessage {
-    pub message: String,
+#[serde(tag = "type")]
+pub enum ClientMessage {
+    JoinGroup {
+        group_id: String,
+        connection_id: String,
+    },
+    GroupMessage {
+        group_id: String,
+        message: String,
+    },
 }
-
 #[derive(Deserialize, Serialize, Debug)]
 pub struct ServerMessage {
     pub message: String,

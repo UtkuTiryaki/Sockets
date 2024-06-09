@@ -1,0 +1,13 @@
+[
+    {
+        "type": "JoinGroup",
+        "group_id": "default",
+        "connection_id": "6f7e53a4-bc0c-4359-9eeb-1b8ca25bd0c9"
+    }
+    ,
+    {
+        "type": "JoinGroup",
+        "group_id": "default",
+        "connection_id": "8fdc709d-f160-423e-af9e-851e4008c36b"
+    }
+]

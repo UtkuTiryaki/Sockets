@@ -1,4 +1,3 @@
-
 use crate::messages::*;
 use crate::session::WebSocketSession;
 use actix::prelude::*;
@@ -28,6 +27,7 @@ impl Handler<Connect> for DashboardActor {
 
     fn handle(&mut self, msg: Connect, _: &mut Self::Context) -> Self::Result {
         self.sessions.insert(msg.connection_id.clone(), msg.addr);
+        println!("User {} connected", msg.connection_id);
     }
 }
 
@@ -36,10 +36,13 @@ impl Handler<Disconnect> for DashboardActor {
 
     fn handle(&mut self, msg: Disconnect, _: &mut Self::Context) -> Self::Result {
         self.sessions.remove(&msg.connection_id);
+        println!("User {} disconnected", msg.connection_id);
 
         let mut groups = self.groups.lock().unwrap();
         for group in groups.values_mut() {
-            group.remove(&msg.connection_id);
+            if group.remove(&msg.connection_id) {
+                println!("User {} removed from group", msg.connection_id);
+            }
         }
     }
 }
@@ -53,6 +56,7 @@ impl Handler<JoinGroup> for DashboardActor {
             .entry(msg.group_id.clone())
             .or_insert_with(HashSet::new)
             .insert(msg.connection_id.clone());
+        println!("User {} joined group {}", msg.connection_id, msg.group_id);
     }
 }
 
@@ -62,7 +66,9 @@ impl Handler<LeaveGroup> for DashboardActor {
     fn handle(&mut self, msg: LeaveGroup, _: &mut Self::Context) -> Self::Result {
         let mut groups = self.groups.lock().unwrap();
         if let Some(group) = groups.get_mut(&msg.group_id) {
-            group.remove(&msg.connection_id);
+            if group.remove(&msg.connection_id) {
+                println!("User {} left group {}", msg.connection_id, msg.group_id);
+            }
         }
     }
 }
@@ -73,6 +79,7 @@ impl Handler<GroupMessage> for DashboardActor {
     fn handle(&mut self, msg: GroupMessage, _: &mut Self::Context) -> Self::Result {
         let groups = self.groups.lock().unwrap();
         if let Some(group) = groups.get(&msg.group_id) {
+            println!("Sending message to group {}: {}", msg.group_id, msg.message);
             for connection_id in group {
                 if let Some(addr) = self.sessions.get(connection_id) {
                     addr.do_send(SendTextMessage {

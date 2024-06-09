@@ -1,4 +1,3 @@
-
 use actix::prelude::*;
 use actix_web_actors::ws;
 use serde_json;
@@ -44,6 +43,11 @@ impl Actor for WebSocketSession {
             addr: ctx.address(),
             connection_id: self.id.clone(),
         });
+
+        self.addr.do_send(JoinGroup {
+            group_id: "default".into(),
+            connection_id: self.id.clone(),
+        });
     }
 
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
@@ -73,22 +77,27 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
 
                 println!("Client message: {:?}", client_message);
 
-                // For demonstration, every message joins the default group
-                self.addr.do_send(JoinGroup {
-                    group_id: "default".into(),
-                    connection_id: self.id.clone(),
-                });
+                match client_message {
+                    ClientMessage::JoinGroup { group_id, connection_id } => {
+                        self.addr.do_send(JoinGroup {
+                            group_id,
+                            connection_id,
+                        });
+                    },
+                    ClientMessage::GroupMessage { group_id, message } => {
+                        self.addr.do_send(GroupMessage {
+                            group_id,
+                            message: message.clone(),
+                        });
+                    },
+                }
 
                 let server_message = ServerMessage {
-                    message: format!("Echo: {}", client_message.message),
+                    message: format!("Echo: {}", text),
                 };
+                
                 let response_text = serde_json::to_string(&server_message).unwrap();
-
-                // Broadcast the message to the group
-                self.addr.do_send(GroupMessage {
-                    group_id: "default".into(),
-                    message: response_text,
-                });
+                ctx.text(response_text);
             }
             Ok(ws::Message::Ping(msg)) => {
                 ctx.pong(&msg);
