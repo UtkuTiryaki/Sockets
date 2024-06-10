@@ -1,28 +1,39 @@
 use actix::prelude::*;
 use actix_web_actors::ws;
 use serde_json;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
 use crate::actors::DashboardActor;
-use crate::messages::{ClientMessage, Connect, Disconnect, GroupMessage, JoinGroup, LeaveGroup, SendTextMessage, ServerMessage};
+use crate::messages::{ClientMessage, Connect, Disconnect, SendTextMessage, ServerMessage};
+
+pub type GroupRegistry = Arc<Mutex<HashMap<String, Vec<Addr<WebSocketSession>>>>>;
 
 pub struct WebSocketSession {
     hb: Instant,
     id: String,
     addr: Addr<DashboardActor>,
+    group_id: String,
+    registry: GroupRegistry,
+    self_addr: Option<Addr<Self>>
 }
 
 impl WebSocketSession {
-    pub fn new(id: String, addr: Addr<DashboardActor>) -> Self {
+    pub fn new(id: String, addr: Addr<DashboardActor>, group_id: String, registry: GroupRegistry) -> Self {
         Self {
             hb: Instant::now(),
             id,
             addr,
+            group_id,
+            registry,
+            self_addr: None,
         }
     }
 
     fn hb(&self, ctx: &mut ws::WebsocketContext<Self>) {
         ctx.run_interval(Duration::new(5, 0), |act, ctx| {
-            if Instant::now().duration_since(act.hb) > Duration::new(60, 0) {
+            if Instant::now().duration_since(act.hb) > Duration::new(60, 0) { // Kürzer machen nicht 60 Sekunden für den Hearbeat Ping
                 println!("WebSocket connection timed out");
                 ctx.stop();
                 return;
@@ -39,23 +50,33 @@ impl Actor for WebSocketSession {
         println!("WebSocket session started");
         self.hb(ctx);
 
+        self.self_addr = Some(ctx.address());
+
+        {
+            let mut registry = self.registry.lock().unwrap();
+            let group = registry.entry(self.group_id.clone()).or_insert_with(Vec::new);
+            group.push(ctx.address());
+        }
+
         self.addr.do_send(Connect {
             addr: ctx.address(),
-            connection_id: self.id.clone(),
-        });
-
-        self.addr.do_send(JoinGroup {
-            group_id: "default".into(),
             connection_id: self.id.clone(),
         });
     }
 
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
         println!("WebSocket session stopping");
-        self.addr.do_send(LeaveGroup {
-            group_id: "default".into(),
-            connection_id: self.id.clone(),
-        });
+
+        if let Some(self_addr) = &self.self_addr {
+            let mut registry = self.registry.lock().unwrap();
+            if let Some(group) = registry.get_mut(&self.group_id) {
+                group.retain(|addr| addr != self_addr);
+                if group.is_empty() {
+                    registry.remove(&self.group_id);
+                }
+            }
+        }
+
         self.addr.do_send(Disconnect {
             connection_id: self.id.clone(),
         });
@@ -77,25 +98,25 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
 
                 println!("Client message: {:?}", client_message);
 
-                match client_message {
-                    ClientMessage::JoinGroup { group_id, connection_id } => {
-                        self.addr.do_send(JoinGroup {
-                            group_id,
-                            connection_id,
-                        });
-                    },
-                    ClientMessage::GroupMessage { group_id, message } => {
-                        self.addr.do_send(GroupMessage {
-                            group_id,
-                            message: message.clone(),
-                        });
-                    },
-                }
+                let registry = self.registry.clone();
+                let group_id = self.group_id.clone();
+                let message = client_message.message.clone();
+
+                actix::spawn(async move {
+                    let registry = registry.lock().unwrap();
+                    if let Some(group) = registry.get(&group_id) {
+                        for addr in group {
+                            addr.do_send(SendTextMessage {
+                                message: message.clone(),
+                            });
+                        }
+                    }
+                });
 
                 let server_message = ServerMessage {
                     message: format!("Echo: {}", text),
                 };
-                
+
                 let response_text = serde_json::to_string(&server_message).unwrap();
                 ctx.text(response_text);
             }
