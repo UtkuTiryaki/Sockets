@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::actors::DashboardActor;
-use crate::messages::{ClientMessage, Connect, Disconnect, SendTextMessage, ServerMessage};
+use crate::messages::{ClientMessage, Connect, Disconnect, ServerMessage};
 
 pub type GroupRegistry = Arc<Mutex<HashMap<String, Vec<Addr<WebSocketSession>>>>>;
 
@@ -84,6 +84,15 @@ impl Actor for WebSocketSession {
     }
 }
 
+impl Handler<ServerMessage> for WebSocketSession {
+    type Result = ();
+
+    fn handle(&mut self, msg: ServerMessage, ctx: &mut Self::Context) -> Self::Result {
+        let response_text = serde_json::to_string(&msg).unwrap();
+        ctx.text(response_text);
+    }
+}
+
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession {
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
         match msg {
@@ -98,27 +107,26 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
 
                 println!("Client message: {:?}", client_message);
 
-                let registry = self.registry.clone();
-                let group_id = self.group_id.clone();
-                let message = client_message.message.clone();
+                match client_message {
+                    ClientMessage::MousePosition { x, y } => {
+                        let transformed_x = x * 1.1;
+                        let transformed_y = y * 1.1;
 
-                actix::spawn(async move {
-                    let registry = registry.lock().unwrap();
-                    if let Some(group) = registry.get(&group_id) {
-                        for addr in group {
-                            addr.do_send(SendTextMessage {
-                                message: message.clone(),
-                            });
-                        }
+                        let server_message = ServerMessage::TransformedMousePosition { x: transformed_x, y: transformed_y };
+
+                        let registry = self.registry.clone();
+                        let group_id = self.group_id.clone();
+                        actix::spawn(async move {
+                            let registry = registry.lock().unwrap();
+                            if let Some(group) = registry.get(&group_id) {
+                                for addr in group {
+                                    addr.do_send(server_message.clone());
+                                }
+                            }
+                        });
                     }
-                });
-
-                let server_message = ServerMessage {
-                    message: format!("Echo: {}", text),
-                };
-
-                let response_text = serde_json::to_string(&server_message).unwrap();
-                ctx.text(response_text);
+                }
+                
             }
             Ok(ws::Message::Ping(msg)) => {
                 ctx.pong(&msg);
@@ -129,13 +137,5 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
             }
             _ => (),
         }
-    }
-}
-
-impl Handler<SendTextMessage> for WebSocketSession {
-    type Result = ();
-
-    fn handle(&mut self, msg: SendTextMessage, ctx: &mut Self::Context) -> Self::Result {
-        ctx.text(msg.message);
     }
 }

@@ -14,18 +14,16 @@ pub struct Disconnect {
     pub connection_id: String,
 }
 
-#[derive(Message, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Message, Clone)]
 #[rtype(result = "()")]
-pub struct SendTextMessage {
-    pub message: String,
+#[serde(tag = "type")]
+pub enum ClientMessage {
+    MousePosition { x: f64, y: f64 },
 }
 
-#[derive(Deserialize, Serialize, Debug)]
-pub struct ClientMessage {
-    pub message: String,
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-pub struct ServerMessage {
-    pub message: String,
+#[derive(Deserialize, Serialize, Debug, Message, Clone)]
+#[rtype(result = "()")]
+#[serde(tag = "type")]
+pub enum ServerMessage {
+    TransformedMousePosition { x: f64, y: f64 },
 }
